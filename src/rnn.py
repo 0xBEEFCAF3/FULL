@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import datetime
 
 import math
@@ -21,7 +22,7 @@ mpl.rcParams['axes.grid'] = False
 
 MAX_EPOCHS = 20
 CHECK_POINT_PATH = './checkpoints/'
-FINAL_MODEL_PATH = './models'
+FINAL_MODEL_PATH = '../models/rnn_7200'
 
 
 class WindowGenerator():
@@ -155,16 +156,18 @@ def as_date(ts):
     return(datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S'))
 
 
-def main():
-    # TODO take path to data as arg
-    df = pd.read_json('../data/split_data.json')
+def clean_dataset(dataset_path):
+    df = pd.read_json(dataset_path)
+    cols = list(df.columns)
+
     # Drop meta data fields
     df.drop('txid', axis=1, inplace=True)
     df.drop('hash', axis=1, inplace=True)
     df.drop('version', axis=1, inplace=True)
     df.drop('locktime', axis=1, inplace=True)
     df.drop('vsize', axis=1, inplace=True)
-    df.drop('conf', axis=1, inplace=True)
+    if 'conf' in cols:
+        df.drop('conf', axis=1, inplace=True)
     # TODO do we really need to drop net difficulty
     df.drop(columns='networkdifficulty', inplace=True)
     # Sort by date value
@@ -180,10 +183,55 @@ def main():
     # pad -> forward fill
     # iloc -> first row is all na's skip that boi
     df = df.resample('15S').pad().iloc[1:, :]
-
     # Split data
-    column_indices = {name: i for i, name in enumerate(df.columns)}
 
+    return df
+
+
+def min_max(df):
+    mean = df.mean()
+    std = df.std()
+
+    return (df - mean) / std
+
+
+def reverse_min_max(value, mean, std):
+    return (value * std) + mean
+
+
+def plot(window, model=None, plot_col='mempoolsize'):
+    inputs, labels = window.example
+    fig = plt.figure(figsize=(12, 8))
+    plot_col_index = window.column_indices[plot_col]
+
+    plt.ylabel(f'{plot_col} [normed]')
+    plt.plot(window.input_indices, inputs[0, :, plot_col_index],
+             label='Inputs', marker='.', zorder=-10)
+
+    if window.label_columns:
+        label_col_index = window.label_columns_indices.get(plot_col, None)
+    else:
+        label_col_index = plot_col_index
+
+    plt.scatter(window.label_indices, labels[0, :, label_col_index],
+                edgecolors='k', label='Labels', c='#2ca02c', s=64)
+    if model is not None:
+        predictions = model(inputs)
+        plt.scatter(window.label_indices, predictions[0, :, label_col_index],
+                    marker='X', edgecolors='k', label='Predictions',
+                    c='#ff7f0e', s=64)
+
+        plt.legend()
+
+    plt.xlabel('15 sec')
+
+    fig.show()
+
+
+def main():
+    new_data_df = clean_dataset('../data/new_test_data.json')
+
+    df = clean_dataset('../data/split_data.json')
     n = len(df)
     train_df = df[0:int(n*0.7)]
     val_df = df[int(n*0.7):int(n*0.9)]
@@ -195,25 +243,43 @@ def main():
     train_mean = train_df.mean()
     train_std = train_df.std()
 
-    train_df = (train_df - train_mean) / train_std
-    val_df = (val_df - train_mean) / train_std
-    test_df = (test_df - train_mean) / train_std
+    test_mean = train_df.mean()
+    test_std = train_df.std()
 
-    # TODO remove later exmaple code
+    train_df = min_max(train_df)
+    val_df = min_max(val_df)
+    test_df = min_max(test_df)
 
+    new_test_df_mean = new_data_df.mean()
+    new_test_df_std = new_data_df.std()
+    new_test_df = min_max(new_data_df)
+
+    test_mempool_size_mean = test_mean['mempoolsize']
+    test_mempool_size_std = test_std['mempoolsize']
+
+    new_test_mempool_size_mean = new_test_df_mean['mempoolsize']
+    new_test_mempool_size_std = new_test_df_std['mempoolsize']
+
+    print('new test describe: ', new_test_mempool_size_mean,
+          new_test_mempool_size_std)
+    print('test describe: ', test_mempool_size_mean, test_mempool_size_std)
+
+# 1 time unit = 15 seconds
     wide_window = WindowGenerator(
-        input_width=24, label_width=24, shift=1,
+        input_width=1200, label_width=1200, shift=1,
         label_columns=['mempoolsize'],
         train_df=train_df,
         val_df=val_df,
         test_df=test_df
     )
 
-    # model = tf.keras.Sequential([
-    #     tf.keras.layers.Dense(units=64, activation='relu'),
-    #     tf.keras.layers.Dense(units=64, activation='relu'),
-    #     tf.keras.layers.Dense(units=1)
-    # ])
+    test_data_window = WindowGenerator(
+        input_width=1200, label_width=1200, shift=1,
+        label_columns=['mempoolsize'],
+        train_df=new_test_df,
+        val_df=new_test_df,
+        test_df=new_test_df
+    )
 
     model = tf.keras.models.Sequential([
         # Shape [batch, time, features] => [batch, time, lstm_units]
@@ -222,14 +288,13 @@ def main():
         tf.keras.layers.Dense(units=1)
     ])
 
-    checkpoint_dir = os.path.dirname(CHECK_POINT_PATH)
 
-    # Create a callback that saves the model's weights
+#  checkpoint_dir = os.path.dirname(CHECK_POINT_PATH)
+
+  # Create a callback that saves the model's weights
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=CHECK_POINT_PATH,
                                                      save_weights_only=True,
                                                      verbose=1)
-    val_performance = {}
-    performance = {}
 
     def compile_and_fit(model, window, patience=2):
         early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss',
@@ -245,26 +310,34 @@ def main():
                             callbacks=[early_stopping, cp_callback])
         return history
 
-    history = compile_and_fit(model, wide_window)
+    # history = compile_and_fit(model, wide_window)
 
-    # val_performance['model'] = model.evaluate(wide_window.val)
-    # performance['model'] = model.evaluate(
-    #     wide_window.test, verbose=0)
+    model = tf.keras.models.load_model(FINAL_MODEL_PATH)
+    predictions = model.predict(list(test_data_window.test)[0][0])
+    labels = list(test_data_window.test)[0][1]
 
-    # print(val_performance, performance)
-    # wide_window.plot(model)
+    count = 0
+    diff = []
 
-    # Restore the weights
-    model.load_weights(CHECK_POINT_PATH)
-    # model.save(FINAL_MODEL_PATH)
-    # model = tf.keras.models.load_model(FINAL_MODEL_PATH)
+    # Calculate MAE
+    for batch_index, prediction_batch in enumerate(predictions):
+        for prediction_index, prediction in enumerate(prediction_batch):
+            label = reverse_min_max(
+                labels[batch_index][prediction_index], test_mempool_size_mean, test_mempool_size_std)
+            prediction = reverse_min_max(
+                prediction, new_test_mempool_size_mean, new_test_mempool_size_std)
+
+            diff.append(
+                float(abs(label - prediction)))
+            count += 1
+
+    print("new data MAE: " + str(sum(diff) / count))
+
+    plot(test_data_window, model)
 
     # Evaluate the model
-    loss, acc = model.evaluate(wide_window.test, verbose=2)
-
-    print("model, accuracy: " + str(acc))
-    # print(model.metrics_name)
-    # print(tf.keras.model)
+    # loss, acc = model.evaluate(wide_window.test, verbose=2)
+    # print("test data MAE: " + str(acc))
 
 
 if __name__ == "__main__":
