@@ -1,8 +1,5 @@
 
-def min_max(df):
-    mean = df.mean()
-    std = df.std()
-
+def min_max(df, mean, std):
     return (df - mean) / std
 
 
