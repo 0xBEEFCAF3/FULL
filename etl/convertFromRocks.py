@@ -14,7 +14,6 @@ def convert_to_json_file():
     accumulated_list = []
     file_list = glob.glob(DB_PATH + DB_GLOB)
     for rocks_db_path in file_list:
-        print(rocks_db_path)
         opts = rocksdb.Options()
 
         opts.create_if_missing = False
