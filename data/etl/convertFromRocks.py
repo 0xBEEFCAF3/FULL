@@ -4,7 +4,7 @@ import json
 import rocksdb
 import glob
 
-DB_PATH = '../data/'
+DB_PATH = './raw/'
 DB_GLOB = '/*.rocks'
 OUTPUT_PATH = './raw_data.json'
 

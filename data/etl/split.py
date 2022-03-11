@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import json
 
-FILE_PATH = '../data/raw_data.json'
-OUTPUT_PATH = '../data/split_data.json'
+FILE_PATH = './clean/clean_data.json'
+OUTPUT_PATH = './interim/split_data.json'
 
 
 def main():
