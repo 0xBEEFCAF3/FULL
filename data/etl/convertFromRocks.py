@@ -45,6 +45,4 @@ if __name__ == "__main__":
     parser.add_argument("--outputpath", type=str,
                         help="output path")
     args = parser.parse_args()
-
-    print(args.dbpath)
     convert_to_json_file(args.dbpath, args.dbglob, args.outputpath)
