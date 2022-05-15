@@ -3,16 +3,13 @@
 import json
 import rocksdb
 import glob
-
-DB_PATH = './raw/'
-DB_GLOB = '/*.rocks'
-OUTPUT_PATH = './raw_data.json'
+import argparse
 
 
-def convert_to_json_file():
+def convert_to_json_file(db_path, db_glob, output_path):
 
     accumulated_list = []
-    file_list = glob.glob(DB_PATH + DB_GLOB)
+    file_list = glob.glob(db_path + db_glob)
     for rocks_db_path in file_list:
         opts = rocksdb.Options()
 
@@ -33,9 +30,19 @@ def convert_to_json_file():
         for _index, txid in enumerate(tx_ids):
             accumulated_list.append(json.loads(db.get(txid)))
 
-    with open(OUTPUT_PATH, 'w') as f:
+    with open(output_path, 'w') as f:
         json.dump(accumulated_list, f)
 
 
 if __name__ == "__main__":
-    convert_to_json_file()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dbpath", type=str,
+                        help="Path to data base objects")
+
+    parser.add_argument("--dbglob", type=str,
+                        help="regex pattern for objects to inside db path")
+
+    parser.add_argument("--outputpath", type=str,
+                        help="output path")
+    args = parser.parse_args()
+    convert_to_json_file(args.dbpath, args.dbglob, args.outputpath)
